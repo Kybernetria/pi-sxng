@@ -1,6 +1,6 @@
 {
   "name": "pi-search-extension",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Minimal private-first Pi extension for web search, local content extraction, and cached content retrieval.",
   "type": "module",
   "main": "./extension.ts",
@@ -20,10 +20,10 @@
   ],
   "license": "MIT",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
   },
   "dependencies": {
-    "@kybernetria/pi-protocol": "file:../../pi-protocol/packages/pi-protocol",
     "@mozilla/readability": "^0.6.0",
     "linkedom": "^0.18.12",
     "turndown": "^7.2.4",
@@ -50,8 +50,10 @@
     "extension.ts",
     "src",
     "protocol",
-    "archive",
     "pi.protocol.json",
-    "README.md"
+    "README.md",
+    "compose.yaml",
+    "deploy",
+    "test"
   ]
 }

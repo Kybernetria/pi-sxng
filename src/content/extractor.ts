@@ -15,6 +15,9 @@
  *   This shaves ~900 file opens off pi-bakery startup (STARTUP-1).
  */
 
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
+
 // NOTE: do NOT add static imports of @mozilla/readability, linkedom,
 // turndown or unpdf here. Use `await import(...)` inside the functions
 // that need them (extractFromHtml, extractFromPdf). See STARTUP-1.
@@ -133,6 +136,15 @@ export function countWords(text: string): number {
 	return text.trim().split(/\s+/).filter(w => w.length > 0).length;
 }
 
+/** Resolve relative Markdown links/images produced from fetched HTML. */
+export function resolveMarkdownLinks(markdown: string, pageUrl: string): string {
+	return markdown.replace(/(!?\[[^\]]*\]\()([^\s)]+)([^)]*\))/g, (match, prefix: string, target: string, suffix: string) => {
+		if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(target)) return match;
+		try { return `${prefix}${new URL(target, pageUrl).toString()}${suffix}`; }
+		catch { return match; }
+	});
+}
+
 // ─── Extraction implementations ────────────────────────────────────────────
 
 /**
@@ -174,7 +186,7 @@ export async function extractFromHtml(
 		
 		// Parse the article content back to get clean HTML for Turndown
 		const { document: contentDoc } = parseHTML(article.content);
-		const markdown = turndown.turndown(contentDoc.toString());
+		const markdown = resolveMarkdownLinks(turndown.turndown(contentDoc.toString()), url);
 		
 		const wordCount = countWords(markdown);
 		const hasTitle = !!(article.title && article.title.length > 0);
@@ -230,6 +242,8 @@ export async function extractFromPdf(
 			wordCount,
 			hasTitle: false,
 			hasMetadata: false,
+			// Successfully extracted PDF text is dense by definition.
+			textDensity: 1,
 		});
 		
 		return {
@@ -251,6 +265,7 @@ export async function extractFromPdf(
  */
 export async function extractViaJina(
 	url: string,
+	signal?: AbortSignal,
 ): Promise<ExtractionResult> {
 	const jinaUrl = `https://r.jina.ai/${url}`;
 	
@@ -260,7 +275,7 @@ export async function extractViaJina(
 				'Accept': 'text/plain',
 				'X-Return-Format': 'markdown',
 			},
-			signal: AbortSignal.timeout(30_000),
+			signal: timeoutSignal(signal, 30_000),
 		});
 		
 		if (!response.ok) {
@@ -339,6 +354,70 @@ export function extractDirect(html: string, url: string): ExtractionResult {
 
 // ─── Main extraction pipeline ──────────────────────────────────────────────
 
+function timeoutSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+	const timeout = AbortSignal.timeout(timeoutMs);
+	return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+function privateAddress(address: string): boolean {
+	const version = isIP(address);
+	if (version === 4) {
+		const [a, b] = address.split(".").map(Number);
+		return a === 0 || a === 10 || a === 127 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a === 100 && b >= 64 && b <= 127 || a === 198 && (b === 18 || b === 19);
+	}
+	if (version !== 6) return false;
+	const [left, right = ""] = address.toLowerCase().split("::", 2);
+	const expand = (part: string) => part ? part.split(":").flatMap(word => word.includes(".")
+		? word.split(".").reduce<number[]>((words, octet, index, all) => index % 2 ? [...words.slice(0, -1), (words.at(-1)! << 8) | Number(octet)] : [...words, Number(octet)], [])
+		: [Number.parseInt(word, 16)]) : [];
+	const leftWords = expand(left);
+	const rightWords = expand(right);
+	const words = [...leftWords, ...Array(Math.max(0, 8 - leftWords.length - rightWords.length)).fill(0), ...rightWords];
+	if (words.length !== 8) return false;
+	if (words.every(word => word === 0) || words.slice(0, 7).every(word => word === 0) && words[7] === 1) return true;
+	if ((words[0] & 0xfe00) === 0xfc00 || (words[0] & 0xffc0) === 0xfe80) return true;
+	const embeddedV4 = words.slice(0, 6).every(word => word === 0) || words.slice(0, 5).every(word => word === 0) && words[5] === 0xffff;
+	return embeddedV4 && privateAddress(`${words[6] >> 8}.${words[6] & 255}.${words[7] >> 8}.${words[7] & 255}`);
+}
+
+/** Reject schemes and destinations that would let a web-fetch tool reach local services. */
+export async function validatePublicUrl(value: string): Promise<URL> {
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new Error("Invalid URL");
+	}
+	if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Only http and https URLs are supported");
+	if (url.username || url.password) throw new Error("URLs with embedded credentials are not supported");
+	if (/^(?:1|true|yes|on)$/i.test(process.env.PI_SEARCH_ALLOW_PRIVATE_URLS ?? "")) return url;
+	const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+	if (host === "localhost" || host.endsWith(".localhost")) throw new Error("Private-network URLs are disabled; set PI_SEARCH_ALLOW_PRIVATE_URLS=true to enable them");
+	if (isIP(host)) {
+		if (privateAddress(host)) throw new Error("Private-network URLs are disabled; set PI_SEARCH_ALLOW_PRIVATE_URLS=true to enable them");
+		return url;
+	}
+	const addresses = await lookup(host, { all: true, verbatim: true });
+	if (!addresses.length || addresses.some(({ address }) => privateAddress(address))) {
+		throw new Error("Private-network URLs are disabled; set PI_SEARCH_ALLOW_PRIVATE_URLS=true to enable them");
+	}
+	return url;
+}
+
+async function fetchPublicUrl(url: string, init: Omit<RequestInit, "redirect">): Promise<{ response: Response; url: string }> {
+	let current = (await validatePublicUrl(url)).toString();
+	for (let redirects = 0; redirects <= 5; redirects++) {
+		const response = await fetch(current, { ...init, redirect: "manual" });
+		if (response.status < 300 || response.status >= 400) return { response, url: current };
+		const location = response.headers.get("location");
+		await response.body?.cancel();
+		if (!location) throw new Error(`Redirect HTTP ${response.status} did not include a Location header`);
+		if (redirects === 5) throw new Error("Too many redirects");
+		current = (await validatePublicUrl(new URL(location, current).toString())).toString();
+	}
+	throw new Error("Too many redirects");
+}
+
 export interface FetchContentOptions {
 	/** Quality threshold for fallback decision (0-100, default 50) */
 	qualityThreshold?: number;
@@ -348,6 +427,12 @@ export interface FetchContentOptions {
 	allowJina?: boolean;
 	/** Timeout in milliseconds (default 15000) */
 	timeout?: number;
+	/** Pi cancellation signal */
+	signal?: AbortSignal;
+	/** Maximum HTML response size (default 5 MiB) */
+	maxHtmlBytes?: number;
+	/** Maximum PDF response size (default 25 MiB) */
+	maxPdfBytes?: number;
 }
 
 /**
@@ -403,7 +488,7 @@ export async function extractGitHub(
 		// ── blob: fetch raw file ───────────────────────────────────────────
 		if (info.type === "blob" && info.ref && info.path) {
 			const rawUrl = `https://raw.githubusercontent.com/${info.owner}/${info.repo}/${info.ref}/${info.path}`;
-			const resp = await fetch(rawUrl, { headers: { "User-Agent": "PiBakery/1.0" }, signal: signal ?? AbortSignal.timeout(20_000) });
+			const resp = await fetch(rawUrl, { headers: { "User-Agent": "PiBakery/1.0" }, signal: timeoutSignal(signal, 20_000) });
 			if (!resp.ok) return null;
 			const text = await resp.text();
 			const wc = countWords(text);
@@ -413,7 +498,7 @@ export async function extractGitHub(
 		// ── root/tree: fetch tree listing + key files ──────────────────────
 		const ref = info.ref ?? "HEAD";
 		const treeUrl = `https://api.github.com/repos/${info.owner}/${info.repo}/git/trees/${ref}?recursive=1`;
-		const treeResp = await fetch(treeUrl, { headers, signal: signal ?? AbortSignal.timeout(20_000) });
+		const treeResp = await fetch(treeUrl, { headers, signal: timeoutSignal(signal, 20_000) });
 		if (!treeResp.ok) return null;
 		const treeData = await treeResp.json() as { tree?: Array<{ path?: string; type?: string }> };
 		const entries = (treeData.tree ?? []).filter(e => e.type === "blob" && e.path);
@@ -424,7 +509,7 @@ export async function extractGitHub(
 		let readmeText = "";
 		if (readmePath) {
 			try {
-				const raw = await fetch(`https://raw.githubusercontent.com/${info.owner}/${info.repo}/${ref}/${readmePath}`, { headers: { "User-Agent": "PiBakery/1.0" }, signal: signal ?? AbortSignal.timeout(15_000) });
+				const raw = await fetch(`https://raw.githubusercontent.com/${info.owner}/${info.repo}/${ref}/${readmePath}`, { headers: { "User-Agent": "PiBakery/1.0" }, signal: timeoutSignal(signal, 15_000) });
 				if (raw.ok) readmeText = (await raw.text()).slice(0, 6000);
 			} catch { /* non-fatal */ }
 		}
@@ -460,7 +545,7 @@ export async function extractYouTube(
 
 	// oEmbed for title/author
 	try {
-		const oEmbed = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { signal: signal ?? AbortSignal.timeout(10_000) });
+		const oEmbed = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { signal: timeoutSignal(signal, 10_000) });
 		if (oEmbed.ok) {
 			const data = await oEmbed.json() as { title?: string; author_name?: string };
 			if (data.title) lines.push(`# ${data.title}`);
@@ -472,7 +557,7 @@ export async function extractYouTube(
 
 	// Transcript (captions) via timedtext API — works for videos with auto-captions
 	try {
-		const tcResp = await fetch(`https://www.youtube.com/api/timedtext?v=${videoId}&lang=en&fmt=json3`, { signal: signal ?? AbortSignal.timeout(15_000) });
+		const tcResp = await fetch(`https://www.youtube.com/api/timedtext?v=${videoId}&lang=en&fmt=json3`, { signal: timeoutSignal(signal, 15_000) });
 		if (tcResp.ok) {
 			const raw = await tcResp.json() as { events?: Array<{ segs?: Array<{ utf8?: string }> }> };
 			const words = (raw.events ?? []).flatMap(e => (e.segs ?? []).map(s => s.utf8 ?? "")).join(" ").replace(/\s+/g, " ").trim();
@@ -492,6 +577,35 @@ export async function extractYouTube(
 
 // ─── Main dispatch ─────────────────────────────────────────────────────────
 
+export async function readResponseBounded(response: Response, maxBytes: number): Promise<Buffer> {
+	const safeMax = Math.max(1, Math.trunc(maxBytes));
+	const declaredLength = Number(response.headers.get("content-length"));
+	if (Number.isFinite(declaredLength) && declaredLength > safeMax) {
+		throw new Error(`Response is too large (${declaredLength} bytes; limit ${safeMax})`);
+	}
+	if (!response.body) return Buffer.alloc(0);
+
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+			total += value.byteLength;
+			if (total > safeMax) {
+				await reader.cancel("response size limit exceeded");
+				throw new Error(`Response exceeded ${safeMax} byte limit`);
+			}
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), total);
+}
+
 export async function fetchContent(
 	url: string,
 	options: FetchContentOptions = {},
@@ -501,25 +615,35 @@ export async function fetchContent(
 		forceJina = false,
 		allowJina = process.env.JINA_ENABLED === "true",
 		timeout = 15_000,
+		signal,
+		maxHtmlBytes = 5 * 1024 * 1024,
+		maxPdfBytes = 25 * 1024 * 1024,
 	} = options;
+	const combinedSignal = timeoutSignal(signal, timeout);
+	await validatePublicUrl(url);
 
 	// Jina is third-party. Only use it when explicitly enabled/forced.
 	if (forceJina) {
-		return extractViaJina(url);
+		return extractViaJina(url, signal);
 	}
+
+	// Prefer purpose-built local extractors for supported URLs.
+	const github = await extractGitHub(url, combinedSignal);
+	if (github) return github;
+	const youtube = await extractYouTube(url, combinedSignal);
+	if (youtube) return youtube;
 
 	// Check if URL looks like a PDF
 	const isPdf = isPdfUrl(url);
 	
 	try {
 		// Fetch the URL
-		const response = await fetch(url, {
+		const { response, url: finalUrl } = await fetchPublicUrl(url, {
 			headers: {
 				'User-Agent': 'Mozilla/5.0 (compatible; PiBakery/1.0)',
 				'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf,*/*;q=0.8',
 			},
-			redirect: 'follow',
-			signal: AbortSignal.timeout(timeout),
+			signal: combinedSignal,
 		});
 		
 		if (!response.ok) {
@@ -530,12 +654,12 @@ export async function fetchContent(
 		
 		// Handle PDF content
 		if (isPdf || isPdfContentType(contentType)) {
-			const buffer = Buffer.from(await response.arrayBuffer());
-			const result = await extractFromPdf(buffer, url);
+			const buffer = await readResponseBounded(response, maxPdfBytes);
+			const result = await extractFromPdf(buffer, finalUrl);
 			
 			// Check if we should fallback to Jina for poor PDF extraction
 			if (allowJina && shouldUseFallback(result.quality, qualityThreshold)) {
-				try { return await extractViaJina(url); }
+				try { return await extractViaJina(url, signal); }
 				catch { return result; }
 			}
 			
@@ -543,10 +667,10 @@ export async function fetchContent(
 		}
 		
 		// Handle HTML content
-		const html = await response.text();
+		const html = (await readResponseBounded(response, maxHtmlBytes)).toString("utf8");
 		
 		// Try Readability extraction first
-		const readabilityResult = await extractFromHtml(html, url);
+		const readabilityResult = await extractFromHtml(html, finalUrl);
 		
 		if (readabilityResult && !shouldUseFallback(readabilityResult.quality, qualityThreshold)) {
 			return readabilityResult;
@@ -554,14 +678,14 @@ export async function fetchContent(
 		
 		// Readability failed or poor quality - try Jina only when enabled.
 		if (allowJina) {
-			try { return await extractViaJina(url); }
+			try { return await extractViaJina(url, signal); }
 			catch { /* use best local result below */ }
 		}
 		if (readabilityResult) return { ...readabilityResult, usedFallback: false };
-		return extractDirect(html, url);
+		return extractDirect(html, finalUrl);
 	} catch (error) {
 		if (allowJina) {
-			try { return await extractViaJina(url); }
+			try { return await extractViaJina(url, signal); }
 			catch (jinaError) {
 				throw new Error(
 					`All extraction methods failed. Primary: ${error instanceof Error ? error.message : String(error)}, ` +

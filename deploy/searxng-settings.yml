@@ -1,0 +1,16 @@
+use_default_settings: true
+
+server:
+  # Development-only secret. Replace before exposing the service beyond localhost.
+  secret_key: "pi-search-local-only-change-before-remote-use"
+  bind_address: "0.0.0.0"
+  port: 8080
+  image_proxy: false
+  limiter: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json

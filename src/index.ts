@@ -3,6 +3,6 @@
  */
 
 export { registerWebSearchTools } from "./tools.js";
-export type { SearchOptions } from "./tools.js";
+export type { SearchOptions, SearchResult } from "./tools.js";
 export type { ExtractionResult, QualityMetrics } from "./content/extractor.js";
 export type { CachedContentRecord } from "./cache.js";
