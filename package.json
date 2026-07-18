@@ -43,7 +43,6 @@
   },
   "pi": {
     "extensions": [
-      "./node_modules/@kybernetria/pi-protocol/extension.ts",
       "./extension.ts"
     ]
   },

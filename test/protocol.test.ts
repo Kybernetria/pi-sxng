@@ -32,10 +32,7 @@ test("manifest and handlers expose exactly the two protocol provides", () => {
 	);
 	assert.match(packageJson.dependencies["@kybernetria/pi-protocol"], /^\^1\./);
 	assert.ok(packageJson.bundledDependencies.includes("@kybernetria/pi-protocol"));
-	assert.deepEqual(packageJson.pi.extensions, [
-		"./node_modules/@kybernetria/pi-protocol/extension.ts",
-		"./extension.ts",
-	]);
+	assert.deepEqual(packageJson.pi.extensions, ["./extension.ts"]);
 });
 
 test("extension registers lifecycle commands and provides, but no direct search tools", () => {

@@ -85,14 +85,15 @@ npm install
 npm test
 npm run typecheck
 
+# Install pi-protocol once so Pi has the generic `protocol` tool.
+pi install npm:@kybernetria/pi-protocol
 pi install /absolute/path/to/pi-search-extension
-# Development (load the required generic protocol tool, then this node):
-pi \
-  -e /absolute/path/to/pi-search-extension/node_modules/@kybernetria/pi-protocol/extension.ts \
-  -e /absolute/path/to/pi-search-extension/extension.ts
+
+# Development, when pi-protocol is already installed globally:
+pi -e /absolute/path/to/pi-search-extension/extension.ts
 ```
 
-`@kybernetria/pi-protocol` is a required, bundled runtime dependency. The package loads pi-protocol's extension (which supplies the generic `protocol` tool) and registers exactly two handler-backed provides with the canonical fabric APIs. Protocol `web_search` invocations use the same automatic SearXNG readiness behavior as session startup. Loading `extension.ts` directly for development requires its npm dependencies to be installed first.
+`@kybernetria/pi-protocol` is a required runtime dependency, but its Pi extension must be installed and loaded only once. This package does not load a second nested copy of the generic `protocol` tool; it only registers its two handler-backed provides with the shared canonical fabric. Protocol `web_search` invocations use the same automatic SearXNG readiness behavior as session startup. Loading `extension.ts` directly for development requires its npm dependencies to be installed first.
 
 ## Privacy
 
