@@ -3,35 +3,60 @@
   "nodeId": "pi-search-extension",
   "packageId": "pi-search-extension",
   "version": "0.2.0",
-  "purpose": "Minimal private-first web search, local content extraction, and local content cache for Pi agents.",
+  "purpose": "Minimal private-first web search and local content extraction for Pi agents through protocol provides.",
   "tags": ["pi", "search", "web", "minimal", "privacy"],
   "provides": [
     {
       "name": "web_search",
-      "description": "Local-first web search. Ensures the bundled loopback SearXNG container is running, with optional Brave fallback. No Exa/Perplexity/OpenAI by default.",
+      "description": "Search through local-first SearXNG with optional configured Brave fallback. Supply query or 1-5 queries; results are compact and bounded.",
       "tags": ["search", "web"],
       "effects": ["network"],
-      "inputSchema": { "type": "object", "properties": { "query": { "type": "string", "minLength": 1 }, "queries": { "type": "array", "minItems": 1, "maxItems": 5, "items": { "type": "string", "minLength": 1 } }, "max_results": { "type": "integer", "minimum": 1, "maximum": 20 }, "provider": { "type": "string", "enum": ["searxng", "brave"] } } },
-      "outputSchema": { "type": "object" },
+      "inputSchema": {
+        "type": "object",
+        "description": "Web search input. query must be non-empty, or queries must contain 1-5 non-empty strings.",
+        "properties": {
+          "query": { "type": "string", "description": "One non-empty search query." },
+          "queries": { "type": "array", "description": "Between 1 and 5 non-empty search queries.", "items": { "type": "string" } },
+          "max_results": { "type": "integer", "description": "Results per query from 1 to 20; defaults to 5." },
+          "provider": { "type": "string", "description": "Optional forced provider.", "enum": ["searxng", "brave"] }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["ok", "isError", "text"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "isError": { "type": "boolean" },
+          "text": { "type": "string", "description": "Bounded human-readable search results." }
+        }
+      },
       "execution": { "type": "handler", "handler": "web_search" }
     },
     {
       "name": "fetch_content",
-      "description": "Fetch and locally extract readable content from a URL or PDF. Jina fallback is opt-in only. Stores full result in local cache.",
-      "tags": ["web", "extract", "cache"],
-      "effects": ["network", "filesystem"],
-      "inputSchema": { "type": "object", "required": ["url"], "properties": { "url": { "type": "string", "minLength": 1 }, "quality_threshold": { "type": "number", "minimum": 0, "maximum": 100 }, "force_jina": { "type": "boolean" }, "max_chars": { "type": "integer", "minimum": 1, "maximum": 50000 }, "refresh": { "type": "boolean" }, "cache_max_age_minutes": { "type": "number", "minimum": 0 } } },
-      "outputSchema": { "type": "object" },
+      "description": "Fetch and locally extract bounded readable content from a public HTTP(S) URL or PDF. Jina fallback is opt-in only.",
+      "tags": ["web", "extract"],
+      "effects": ["network"],
+      "inputSchema": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "description": "Non-empty public HTTP(S) URL." },
+          "quality_threshold": { "type": "number", "description": "Extraction quality threshold from 0 to 100; defaults to 50." },
+          "force_jina": { "type": "boolean", "description": "Force the opt-in Jina extractor; defaults to false." },
+          "max_chars": { "type": "integer", "description": "Maximum returned characters from 1 to 50000; defaults to 12000." }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["ok", "isError", "text"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "isError": { "type": "boolean" },
+          "text": { "type": "string", "description": "Bounded human-readable extracted content." }
+        }
+      },
       "execution": { "type": "handler", "handler": "fetch_content" }
-    },
-    {
-      "name": "get_cached_content",
-      "description": "Retrieve locally cached content by id or URL with offset/length slicing.",
-      "tags": ["cache", "content"],
-      "effects": ["filesystem"],
-      "inputSchema": { "type": "object", "properties": { "id": { "type": "string", "minLength": 1 }, "url": { "type": "string", "minLength": 1 }, "start": { "type": "integer", "minimum": 0 }, "max_chars": { "type": "integer", "minimum": 1, "maximum": 50000 } } },
-      "outputSchema": { "type": "object" },
-      "execution": { "type": "handler", "handler": "get_cached_content" }
     }
   ]
 }

@@ -1,8 +1,17 @@
-/** Minimal private-first web search tools for Pi.
- * Registers: web_search, fetch_content, get_cached_content.
- */
+/** Domain operations backing the pi-search-extension protocol provides. */
 
-export { registerWebSearchTools } from "./tools.js";
-export type { SearchOptions, SearchResult } from "./tools.js";
+export {
+	fetchExtractedContent,
+	searchBrave,
+	searchSearxng,
+	webSearch,
+	MAX_OUTPUT_CHARS,
+} from "./operations.js";
+export type {
+	CompactOperationResult,
+	FetchContentInput,
+	SearchOptions,
+	SearchResult,
+	WebSearchInput,
+} from "./operations.js";
 export type { ExtractionResult, QualityMetrics } from "./content/extractor.js";
-export type { CachedContentRecord } from "./cache.js";

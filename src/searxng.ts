@@ -12,7 +12,7 @@ const DEFAULT_IMAGE = "docker.io/searxng/searxng:latest";
 const SETTINGS_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "deploy", "searxng-settings.yml");
 const LEASE_DIR = join(process.env.XDG_RUNTIME_DIR || tmpdir(), `pi-search-sessions-${process.getuid?.() ?? "user"}`);
 
-type ExecTarget = Pick<ExtensionAPI, "exec"> | { exec?: ExtensionAPI["exec"] };
+export type SearxngExecTarget = Pick<ExtensionAPI, "exec"> | { exec?: ExtensionAPI["exec"] };
 type CommandResult = { stdout: string; stderr: string; code: number | null };
 
 let startupPromise: Promise<SearxngStatus> | undefined;
@@ -113,12 +113,12 @@ export async function probeSearxng(url = configuredSearxngUrl(), signal?: AbortS
 	}
 }
 
-export async function stopSearxngIfUnused(target: ExecTarget, signal?: AbortSignal): Promise<boolean> {
+export async function stopSearxngIfUnused(target: SearxngExecTarget, signal?: AbortSignal): Promise<boolean> {
 	if (!stopWithPiEnabled() || countActiveSessionLeases() > 0) return false;
 	return stopManagedSearxng(target, signal);
 }
 
-export async function stopManagedSearxng(target: ExecTarget, signal?: AbortSignal): Promise<boolean> {
+export async function stopManagedSearxng(target: SearxngExecTarget, signal?: AbortSignal): Promise<boolean> {
 	const runtime = await findRuntime(target, signal);
 	if (!runtime) return false;
 	const inspected = await run(target, runtime, ["container", "inspect", CONTAINER_NAME], signal, 10_000);
@@ -128,7 +128,7 @@ export async function stopManagedSearxng(target: ExecTarget, signal?: AbortSigna
 	return true;
 }
 
-export async function getSearxngStatus(target: ExecTarget, override?: string, signal?: AbortSignal): Promise<SearxngStatus> {
+export async function getSearxngStatus(target: SearxngExecTarget, override?: string, signal?: AbortSignal): Promise<SearxngStatus> {
 	const url = configuredSearxngUrl(override);
 	if (await probeSearxng(url, signal)) return { url, healthy: true, managed: isLoopbackSearxng(url), message: "SearXNG is ready." };
 	if (!isLoopbackSearxng(url)) return { url, healthy: false, managed: false, message: "Configured remote SearXNG endpoint is unavailable; it will not be managed locally." };
@@ -143,7 +143,7 @@ export async function getSearxngStatus(target: ExecTarget, override?: string, si
 }
 
 export function ensureSearxng(
-	target: ExecTarget,
+	target: SearxngExecTarget,
 	options: { url?: string; signal?: AbortSignal; force?: boolean } = {},
 ): Promise<SearxngStatus> {
 	if (!startupPromise) {
@@ -153,7 +153,7 @@ export function ensureSearxng(
 }
 
 async function ensureSearxngOnce(
-	target: ExecTarget,
+	target: SearxngExecTarget,
 	options: { url?: string; signal?: AbortSignal; force?: boolean },
 ): Promise<SearxngStatus> {
 	const url = configuredSearxngUrl(options.url);
@@ -199,7 +199,7 @@ async function ensureSearxngOnce(
 	throw new Error(`${CONTAINER_NAME} started with ${runtime}, but SearXNG did not become ready at ${url}`);
 }
 
-async function findRuntime(target: ExecTarget, signal?: AbortSignal): Promise<string | undefined> {
+async function findRuntime(target: SearxngExecTarget, signal?: AbortSignal): Promise<string | undefined> {
 	const preferred = process.env.PI_SEARCH_CONTAINER_RUNTIME;
 	const candidates = preferred ? [preferred] : ["podman", "docker"];
 	for (const runtime of candidates) {
@@ -209,7 +209,7 @@ async function findRuntime(target: ExecTarget, signal?: AbortSignal): Promise<st
 	return undefined;
 }
 
-async function run(target: ExecTarget, command: string, args: string[], signal: AbortSignal | undefined, timeout: number): Promise<CommandResult> {
+async function run(target: SearxngExecTarget, command: string, args: string[], signal: AbortSignal | undefined, timeout: number): Promise<CommandResult> {
 	if (typeof target.exec === "function") {
 		try {
 			const result = await target.exec(command, args, { signal, timeout });

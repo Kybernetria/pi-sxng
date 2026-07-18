@@ -1,8 +1,10 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerWebSearchTools } from "./src/tools.js";
+import {
+	ensureProtocolFabric,
+	registerProtocolManifest,
+	type PiProtocolManifest,
+} from "@kybernetria/pi-protocol";
+import manifestJson from "./pi.protocol.json" with { type: "json" };
 import { createHandlers } from "./protocol/handlers.js";
 import {
 	autoStartEnabled,
@@ -14,28 +16,21 @@ import {
 	stopSearxngIfUnused,
 } from "./src/searxng.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const NODE_ID = "pi-search-extension";
-const FABRIC_KEY = Symbol.for("pi-protocol.minimal.fabric");
-
-type ProtocolFabricLike = {
-	unregister(nodeId: string): void;
-	register(input: { node: Record<string, unknown>; handlers: Record<string, unknown> }): void;
-};
-
-type ProtocolManifest = Record<string, unknown> & {
-	provides: Array<Record<string, unknown> & { execution: Record<string, unknown> }>;
-};
+const manifest = manifestJson as unknown as PiProtocolManifest;
 
 export default function piSearchExtension(pi: ExtensionAPI): void {
 	let sessionLease: string | undefined;
-	registerWebSearchTools(pi);
 	registerSearchCommands(pi);
-	// Registration is retried at session_start so extension load order does not
-	// matter. Pi tools remain usable when the optional protocol extension is absent.
-	registerProtocolNode();
+
+	const fabric = ensureProtocolFabric();
+	fabric.unregister(NODE_ID);
+	registerProtocolManifest(fabric, {
+		manifest,
+		handlers: createHandlers({ searchOptions: { searxngTarget: pi } }),
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
-		registerProtocolNode();
 		removeSessionLease(sessionLease);
 		sessionLease = createSessionLease();
 		if (!autoStartEnabled()) return;
@@ -84,18 +79,4 @@ function registerSearchCommands(pi: ExtensionAPI): void {
 			}
 		},
 	});
-}
-
-function registerProtocolNode(): void {
-	const fabric = (globalThis as Record<PropertyKey, unknown>)[FABRIC_KEY] as ProtocolFabricLike | undefined;
-	if (!fabric || typeof fabric.register !== "function" || typeof fabric.unregister !== "function") return;
-
-	const manifest = JSON.parse(readFileSync(join(__dirname, "pi.protocol.json"), "utf8")) as ProtocolManifest;
-	const { provides, ...nodeFields } = manifest;
-	const node = {
-		...nodeFields,
-		provides: provides.map((provide) => ({ ...provide, execution: { ...provide.execution } })),
-	};
-	fabric.unregister(NODE_ID);
-	fabric.register({ node, handlers: createHandlers() });
 }
