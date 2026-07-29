@@ -28,7 +28,7 @@ test("manifest exposes the exact strict protocol contracts", () => {
 	assert.deepEqual(manifest.provides[1].inputSchema.required, ["url"]);
 	assert.deepEqual(Object.keys(manifest.provides[1].inputSchema.properties ?? {}), ["max_chars", "url"]);
 	assert.deepEqual(manifest.provides.map((provide) => provide.outputSchema.required), [["text"], ["text"]]);
-	assert.match(packageJson.dependencies["@kybernetria/pi-protocol"], /releases\/download\/v2\.0\.0/);
+	assert.match(packageJson.dependencies["@kybernetria/pi-protocol"], /releases\/download\/v3\.0\.1/);
 	assert.equal(packageJson.piProtocol.generated, "protocol.generated.ts");
 	assert.deepEqual(packageJson.pi.extensions, ["./extension.ts"]);
 });
