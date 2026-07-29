@@ -1,7 +1,7 @@
 {
   "name": "pi-search-extension",
-  "version": "0.2.0",
-  "description": "Private-first Pi extension exposing web search and content extraction as pi-protocol provides.",
+  "version": "0.3.0",
+  "description": "Private-first SearXNG search and bounded content extraction through pi-protocol.",
   "type": "module",
   "main": "./extension.ts",
   "exports": {
@@ -24,11 +24,12 @@
     "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@kybernetria/pi-protocol": "^1.0.2",
+    "@kybernetria/pi-protocol": "^1.0.10",
     "@mariozechner/pi-ai": "^0.73.1",
     "@mozilla/readability": "^0.6.0",
     "linkedom": "^0.18.12",
     "turndown": "^7.2.4",
+    "undici": "^7.16.0",
     "unpdf": "^1.6.2"
   },
   "peerDependencies": {
@@ -54,8 +55,7 @@
     "pi.protocol.json",
     "README.md",
     "compose.yaml",
-    "deploy",
-    "test"
+    "deploy"
   ],
   "bundledDependencies": [
     "@kybernetria/pi-protocol"

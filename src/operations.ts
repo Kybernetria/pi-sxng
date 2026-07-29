@@ -1,45 +1,50 @@
 import { fetchContent } from "./content/extractor.js";
-import { ensureSearxng, type SearxngExecTarget } from "./searxng.js";
+import { configuredSearxngUrl, requireSearxng } from "./searxng.js";
 
 export interface SearchOptions {
 	searxngUrl?: string;
-	braveApiKey?: string;
-	searxngTarget?: SearxngExecTarget;
 }
 
 export interface WebSearchInput {
-	query?: string;
-	queries?: string[];
+	query: string;
 	max_results?: number;
-	provider?: "searxng" | "brave";
 }
 
 export interface FetchContentInput {
 	url: string;
-	quality_threshold?: number;
-	force_jina?: boolean;
 	max_chars?: number;
 }
 
 export interface CompactOperationResult {
-	ok: true;
-	isError: false;
 	text: string;
 }
 
-export type SearchResult = {
+export interface SearchResult {
 	title: string;
 	url: string;
 	snippet?: string;
 	publishedDate?: string;
 	score?: number;
 	engines?: string[];
-};
+}
 
-const DEFAULT_SEARXNG_URL = "http://127.0.0.1:8888";
 export const MAX_OUTPUT_CHARS = 50_000;
+const WEB_SEARCH_KEYS = new Set(["query", "max_results"]);
+const FETCH_CONTENT_KEYS = new Set(["url", "max_chars"]);
 
-function truncate(text: string | undefined, max = 320): string | undefined {
+function requestSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+	const timeout = AbortSignal.timeout(timeoutMs);
+	return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+	if (!signal?.aborted) return;
+	const error = signal.reason instanceof Error ? signal.reason : new Error("Invocation aborted", { cause: signal.reason });
+	error.name = "AbortError";
+	throw error;
+}
+
+function truncateOneLine(text: string | undefined, max = 320): string | undefined {
 	if (!text) return undefined;
 	const clean = text.replace(/\s+/g, " ").trim();
 	return clean.length <= max ? clean : `${clean.slice(0, max - 1)}…`;
@@ -49,91 +54,15 @@ function roundScore(score: number | undefined): number | undefined {
 	return score === undefined ? undefined : Math.round(score * 100) / 100;
 }
 
-function compactResults(results: SearchResult[]): SearchResult[] {
-	return results.map((result) => ({
-		title: result.title,
-		url: result.url,
-		snippet: truncate(result.snippet),
-		publishedDate: result.publishedDate,
-		score: roundScore(result.score),
-		engines: result.engines,
-	}));
-}
-
-function formatSearchSummary(
-	searches: Array<{ query: string; provider: string; results: SearchResult[] }>,
-	errors: Array<{ query: string; error: string }> = [],
-): string {
-	const lines: string[] = [];
-	for (const search of searches) {
-		lines.push(`## ${search.query} (${search.provider}, ${search.results.length} results)`);
-		if (!search.results.length) lines.push("No results.");
-		search.results.forEach((result, index) => {
-			lines.push("", `${index + 1}. ${result.title}`, `   ${result.url}`);
-			if (result.snippet) lines.push(`   ${result.snippet}`);
-			const metadata = [
-				result.publishedDate ? `date: ${result.publishedDate}` : undefined,
-				result.score !== undefined ? `score: ${result.score}` : undefined,
-				result.engines?.length ? `engines: ${result.engines.join(", ")}` : undefined,
-			].filter(Boolean);
-			if (metadata.length) lines.push(`   [${metadata.join("; ")}]`);
-		});
-		lines.push("");
-	}
-	if (errors.length) {
-		lines.push("## Failed queries");
-		for (const failure of errors) lines.push(`- ${failure.query}: ${failure.error}`);
-	}
-	return lines.join("\n").trim().slice(0, MAX_OUTPUT_CHARS);
-}
-
-function formatFetchSummary(args: {
-	url: string;
-	title?: string;
-	method?: string;
-	quality?: number;
-	content: string;
-	maxChars: number;
-}): string {
-	const preview = args.content.slice(0, args.maxChars);
-	const truncated = preview.length < args.content.length
-		? `\n\n[Showing the first ${preview.length} of ${args.content.length} characters. Increase max_chars to return more (up to ${MAX_OUTPUT_CHARS}).]`
-		: "";
-	return [
-		"Content fetched.",
-		`URL: ${args.url}`,
-		args.title ? `Title: ${args.title}` : undefined,
-		args.method ? `Method: ${args.method}` : undefined,
-		args.quality !== undefined ? `Quality: ${roundScore(args.quality)}` : undefined,
-		`Full length: ${args.content.length} chars`,
-		"",
-		preview + truncated,
-	].filter((value) => value !== undefined).join("\n").slice(0, MAX_OUTPUT_CHARS);
-}
-
-function requestSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-	const timeout = AbortSignal.timeout(timeoutMs);
-	return signal ? AbortSignal.any([signal, timeout]) : timeout;
-}
-
 function searchUrl(base: string): URL {
-	const normalized = base.endsWith("/") ? base : `${base}/`;
-	return new URL("search", normalized);
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-	if (!signal?.aborted) return;
-	if (signal.reason instanceof Error && signal.reason.name === "AbortError") throw signal.reason;
-	const error = new Error("Invocation aborted", { cause: signal.reason });
-	error.name = "AbortError";
-	throw error;
+	return new URL("search", base.endsWith("/") ? base : `${base}/`);
 }
 
 export async function searchSearxng(
 	query: string,
 	maxResults: number,
 	signal?: AbortSignal,
-	base = process.env.SEARXNG_URL || DEFAULT_SEARXNG_URL,
+	base = configuredSearxngUrl(),
 ): Promise<SearchResult[]> {
 	const url = searchUrl(base);
 	url.searchParams.set("q", query);
@@ -144,68 +73,22 @@ export async function searchSearxng(
 		signal: requestSignal(signal, 15_000),
 	});
 	if (!response.ok) throw new Error(`SearXNG HTTP ${response.status}`);
-	const data = await response.json() as { results?: Array<Record<string, unknown>> };
-	return (data.results ?? []).slice(0, maxResults).map((result) => ({
-		title: String(result.title ?? result.url ?? "Untitled"),
-		url: String(result.url ?? ""),
-		snippet: result.content ? String(result.content) : undefined,
-		publishedDate: result.publishedDate ? String(result.publishedDate) : undefined,
-		score: typeof result.score === "number" ? result.score : undefined,
-		engines: Array.isArray(result.engines) ? result.engines.map(String) : undefined,
-	})).filter((result) => Boolean(result.url));
-}
-
-export async function searchBrave(
-	query: string,
-	maxResults: number,
-	signal?: AbortSignal,
-	key = process.env.BRAVE_API_KEY,
-): Promise<SearchResult[]> {
-	if (!key) throw new Error("BRAVE_API_KEY is not configured");
-	const url = new URL("https://api.search.brave.com/res/v1/web/search");
-	url.searchParams.set("q", query);
-	url.searchParams.set("count", String(Math.min(maxResults, 20)));
-	const response = await fetch(url, {
-		headers: { Accept: "application/json", "X-Subscription-Token": key },
-		signal: requestSignal(signal, 15_000),
-	});
-	if (!response.ok) throw new Error(`Brave HTTP ${response.status}`);
-	const data = await response.json() as { web?: { results?: Array<Record<string, unknown>> } };
-	return (data.web?.results ?? []).map((result) => ({
-		title: String(result.title ?? result.url ?? "Untitled"),
-		url: String(result.url ?? ""),
-		snippet: result.description ? String(result.description) : undefined,
-		publishedDate: result.age ? String(result.age) : undefined,
-	})).filter((result) => Boolean(result.url));
-}
-
-async function doSearch(
-	query: string,
-	maxResults: number,
-	provider: WebSearchInput["provider"],
-	signal: AbortSignal | undefined,
-	options: SearchOptions,
-): Promise<{ query: string; provider: string; results: SearchResult[] }> {
-	const braveKey = options.braveApiKey ?? process.env.BRAVE_API_KEY;
-	const providers = provider ? [provider] : ["searxng", braveKey ? "brave" : undefined].filter(Boolean) as string[];
-	const errors: string[] = [];
-	for (const candidate of providers) {
-		try {
-			throwIfAborted(signal);
-			const results = candidate === "searxng"
-				? await searchSearxng(query, maxResults, signal, options.searxngUrl)
-				: await searchBrave(query, maxResults, signal, braveKey);
-			if (!provider && results.length === 0 && providers.length > 1) {
-				errors.push(`${candidate}: no results`);
-				continue;
-			}
-			return { query, provider: candidate, results };
-		} catch (error) {
-			throwIfAborted(signal);
-			errors.push(`${candidate}: ${error instanceof Error ? error.message : String(error)}`);
-		}
+	const body = await readResponseTextBounded(response, 2 * 1024 * 1024);
+	let data: { results?: Array<Record<string, unknown>> };
+	try {
+		data = JSON.parse(body) as typeof data;
+	} catch {
+		throw new Error("SearXNG returned invalid JSON");
 	}
-	throw new Error(`all providers failed (${errors.join("; ")})`);
+	if (data.results !== undefined && !Array.isArray(data.results)) throw new Error("SearXNG returned an invalid results list");
+	return (data.results ?? []).slice(0, maxResults).map((result) => ({
+		title: truncateOneLine(String(result.title ?? result.url ?? "Untitled"), 500) ?? "Untitled",
+		url: String(result.url ?? ""),
+		snippet: truncateOneLine(result.content ? String(result.content) : undefined),
+		publishedDate: truncateOneLine(result.publishedDate ? String(result.publishedDate) : undefined, 100),
+		score: typeof result.score === "number" && Number.isFinite(result.score) ? roundScore(result.score) : undefined,
+		engines: Array.isArray(result.engines) ? result.engines.slice(0, 20).map(String) : undefined,
+	})).filter((result) => Boolean(result.url));
 }
 
 export async function webSearch(
@@ -215,84 +98,108 @@ export async function webSearch(
 ): Promise<CompactOperationResult> {
 	const params = validateWebSearchInput(input);
 	throwIfAborted(signal);
-	const queries = params.queries?.length ? params.queries : params.query ? [params.query] : [];
-	if (!queries.length) throw new Error("Provide query or queries.");
-	if (params.provider !== "brave") {
-		try {
-			await ensureSearxng(options.searxngTarget ?? {}, { url: options.searxngUrl, signal });
-		} catch (error) {
-			throwIfAborted(signal);
-			if (params.provider === "searxng" || !(options.braveApiKey ?? process.env.BRAVE_API_KEY)) throw error;
-		}
-	}
-	const settled = await Promise.allSettled(
-		queries.map((query) => doSearch(query, params.max_results ?? 5, params.provider, signal, options)),
-	);
+	const base = await requireSearxng(options.searxngUrl, signal);
+	const results = await searchSearxng(params.query, params.max_results ?? 5, signal, base);
 	throwIfAborted(signal);
-	const searches: Array<{ query: string; provider: string; results: SearchResult[] }> = [];
-	const errors: Array<{ query: string; error: string }> = [];
-	settled.forEach((result, index) => {
-		if (result.status === "fulfilled") searches.push({ ...result.value, results: compactResults(result.value.results) });
-		else errors.push({ query: queries[index], error: result.reason instanceof Error ? result.reason.message : String(result.reason) });
-	});
-	if (!searches.length) throw new Error(`web_search failed: ${errors.map((item) => `${item.query}: ${item.error}`).join("; ")}`);
-	return { ok: true, isError: false, text: formatSearchSummary(searches, errors) };
+	return { text: formatSearchSummary(params.query, results) };
 }
 
-export async function fetchExtractedContent(
-	input: unknown,
-	signal?: AbortSignal,
-): Promise<CompactOperationResult> {
+export async function fetchExtractedContent(input: unknown, signal?: AbortSignal): Promise<CompactOperationResult> {
 	const params = validateFetchContentInput(input);
 	throwIfAborted(signal);
-	const result = await fetchContent(params.url, {
-		qualityThreshold: params.quality_threshold ?? 50,
-		forceJina: Boolean(params.force_jina),
-		signal,
-	});
+	const result = await fetchContent(params.url, { signal });
 	throwIfAborted(signal);
-	return {
-		ok: true,
-		isError: false,
-		text: formatFetchSummary({
-			url: result.url,
-			title: result.title,
-			method: result.method,
-			quality: result.quality,
-			content: result.content,
-			maxChars: params.max_chars ?? 12_000,
-		}),
-	};
+	return { text: formatFetchSummary(result, params.max_chars ?? 12_000) };
+}
+
+function formatSearchSummary(query: string, results: SearchResult[]): string {
+	const lines = [`## ${query} (searxng, ${results.length} results)`];
+	if (!results.length) lines.push("No results.");
+	results.forEach((result, index) => {
+		lines.push("", `${index + 1}. ${result.title}`, `   ${result.url}`);
+		if (result.snippet) lines.push(`   ${result.snippet}`);
+		const metadata = [
+			result.publishedDate ? `date: ${result.publishedDate}` : undefined,
+			result.score !== undefined ? `score: ${result.score}` : undefined,
+			result.engines?.length ? `engines: ${result.engines.join(", ")}` : undefined,
+		].filter((value): value is string => Boolean(value));
+		if (metadata.length) lines.push(`   [${metadata.join("; ")}]`);
+	});
+	return lines.join("\n").slice(0, MAX_OUTPUT_CHARS);
+}
+
+function formatFetchSummary(
+	result: { url: string; title?: string; method: string; quality: number; content: string },
+	maxChars: number,
+): string {
+	const header = [
+		"Content fetched.",
+		`URL: ${result.url}`,
+		result.title ? `Title: ${result.title}` : undefined,
+		`Method: ${result.method}`,
+		`Quality: ${roundScore(result.quality)}`,
+		`Full length: ${result.content.length} chars`,
+		"",
+	].filter((value): value is string => value !== undefined).join("\n");
+	const full = `${header}\n${result.content}`;
+	if (full.length <= maxChars) return full;
+	const notice = `\n\n[Output truncated to ${maxChars} characters.]`;
+	if (notice.length >= maxChars) return full.slice(0, maxChars);
+	return `${full.slice(0, maxChars - notice.length)}${notice}`;
 }
 
 function validateWebSearchInput(input: unknown): WebSearchInput {
-	if (!isRecord(input)) throw new Error("web_search input must be an object.");
-	const { query, queries, max_results: maxResults, provider } = input;
-	if (query !== undefined && (typeof query !== "string" || query.length < 1)) throw new Error("query must be a non-empty string.");
-	if (queries !== undefined && (!Array.isArray(queries) || queries.length < 1 || queries.length > 5 || queries.some((item) => typeof item !== "string" || item.length < 1))) {
-		throw new Error("queries must contain 1 to 5 non-empty strings.");
-	}
+	const value = requireStrictObject(input, WEB_SEARCH_KEYS, "web_search");
+	const { query, max_results: maxResults } = value;
+	if (typeof query !== "string" || !query.trim()) throw new Error("query must be a non-empty string.");
+	if (query.length > 2_000) throw new Error("query must not exceed 2000 characters.");
 	if (maxResults !== undefined && (!Number.isInteger(maxResults) || (maxResults as number) < 1 || (maxResults as number) > 20)) {
 		throw new Error("max_results must be an integer from 1 to 20.");
 	}
-	if (provider !== undefined && provider !== "searxng" && provider !== "brave") throw new Error("provider must be searxng or brave.");
-	return { query: query as string | undefined, queries: queries as string[] | undefined, max_results: maxResults as number | undefined, provider };
+	return { query: query.trim(), max_results: maxResults as number | undefined };
 }
 
 function validateFetchContentInput(input: unknown): FetchContentInput {
-	if (!isRecord(input)) throw new Error("fetch_content input must be an object.");
-	const { url, quality_threshold: qualityThreshold, force_jina: forceJina, max_chars: maxChars } = input;
-	if (typeof url !== "string" || url.length < 1) throw new Error("url must be a non-empty string.");
-	if (qualityThreshold !== undefined && (typeof qualityThreshold !== "number" || !Number.isFinite(qualityThreshold) || qualityThreshold < 0 || qualityThreshold > 100)) {
-		throw new Error("quality_threshold must be a number from 0 to 100.");
-	}
-	if (forceJina !== undefined && typeof forceJina !== "boolean") throw new Error("force_jina must be a boolean.");
+	const value = requireStrictObject(input, FETCH_CONTENT_KEYS, "fetch_content");
+	const { url, max_chars: maxChars } = value;
+	if (typeof url !== "string" || !url.trim()) throw new Error("url must be a non-empty string.");
+	if (url.length > 8_192) throw new Error("url must not exceed 8192 characters.");
 	if (maxChars !== undefined && (!Number.isInteger(maxChars) || (maxChars as number) < 1 || (maxChars as number) > MAX_OUTPUT_CHARS)) {
 		throw new Error(`max_chars must be an integer from 1 to ${MAX_OUTPUT_CHARS}.`);
 	}
-	return { url, quality_threshold: qualityThreshold as number | undefined, force_jina: forceJina as boolean | undefined, max_chars: maxChars as number | undefined };
+	return { url: url.trim(), max_chars: maxChars as number | undefined };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+function requireStrictObject(input: unknown, allowed: ReadonlySet<string>, operation: string): Record<string, unknown> {
+	if (typeof input !== "object" || input === null || Array.isArray(input)) throw new Error(`${operation} input must be an object.`);
+	const value = input as Record<string, unknown>;
+	const unknown = Object.keys(value).filter((key) => !allowed.has(key));
+	if (unknown.length) throw new Error(`${operation} input contains unknown field${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}.`);
+	return value;
+}
+
+async function readResponseTextBounded(response: Response, maxBytes: number): Promise<string> {
+	const declared = Number(response.headers.get("content-length"));
+	if (Number.isFinite(declared) && declared > maxBytes) throw new Error(`Response is too large (${declared} bytes; limit ${maxBytes})`);
+	if (!response.body) return "";
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let total = 0;
+	let text = "";
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+			total += value.byteLength;
+			if (total > maxBytes) {
+				await reader.cancel("response size limit exceeded");
+				throw new Error(`Response exceeded ${maxBytes} byte limit`);
+			}
+			text += decoder.decode(value, { stream: true });
+		}
+		return text + decoder.decode();
+	} finally {
+		reader.releaseLock();
+	}
 }

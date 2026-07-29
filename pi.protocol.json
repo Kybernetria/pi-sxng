@@ -2,31 +2,27 @@
   "protocolVersion": "0.2.0",
   "nodeId": "pi-search-extension",
   "packageId": "pi-search-extension",
-  "version": "0.2.0",
-  "purpose": "Minimal private-first web search and local content extraction for Pi agents through protocol provides.",
-  "tags": ["pi", "search", "web", "minimal", "privacy"],
+  "version": "0.3.0",
+  "purpose": "Private-first SearXNG web search and bounded public web-content extraction.",
+  "tags": ["pi", "search", "web", "privacy"],
   "provides": [
     {
       "name": "web_search",
-      "description": "Search through local-first SearXNG with optional configured Brave fallback. Supply query or 1-5 queries; results are compact and bounded.",
+      "description": "Run one web search through the configured SearXNG service. Make parallel protocol calls for multiple independent queries.",
       "tags": ["search", "web"],
       "effects": ["network"],
       "inputSchema": {
         "type": "object",
-        "description": "Web search input. query must be non-empty, or queries must contain 1-5 non-empty strings.",
+        "required": ["query"],
         "properties": {
-          "query": { "type": "string", "description": "One non-empty search query." },
-          "queries": { "type": "array", "description": "Between 1 and 5 non-empty search queries.", "items": { "type": "string" } },
-          "max_results": { "type": "integer", "description": "Results per query from 1 to 20; defaults to 5." },
-          "provider": { "type": "string", "description": "Optional forced provider.", "enum": ["searxng", "brave"] }
+          "query": { "type": "string", "description": "Non-empty search query of at most 2000 characters." },
+          "max_results": { "type": "integer", "description": "Number of results from 1 to 20; defaults to 5." }
         }
       },
       "outputSchema": {
         "type": "object",
-        "required": ["ok", "isError", "text"],
+        "required": ["text"],
         "properties": {
-          "ok": { "type": "boolean" },
-          "isError": { "type": "boolean" },
           "text": { "type": "string", "description": "Bounded human-readable search results." }
         }
       },
@@ -34,25 +30,21 @@
     },
     {
       "name": "fetch_content",
-      "description": "Fetch and locally extract bounded readable content from a public HTTP(S) URL or PDF. Jina fallback is opt-in only.",
+      "description": "Fetch and locally extract bounded readable content from one public HTTP(S) URL or PDF. Private destinations are rejected and optional Jina fallback is controlled only by JINA_ENABLED.",
       "tags": ["web", "extract"],
       "effects": ["network"],
       "inputSchema": {
         "type": "object",
         "required": ["url"],
         "properties": {
-          "url": { "type": "string", "description": "Non-empty public HTTP(S) URL." },
-          "quality_threshold": { "type": "number", "description": "Extraction quality threshold from 0 to 100; defaults to 50." },
-          "force_jina": { "type": "boolean", "description": "Force the opt-in Jina extractor; defaults to false." },
-          "max_chars": { "type": "integer", "description": "Maximum returned characters from 1 to 50000; defaults to 12000." }
+          "url": { "type": "string", "description": "Non-empty public HTTP(S) URL of at most 8192 characters." },
+          "max_chars": { "type": "integer", "description": "Maximum total returned characters from 1 to 50000; defaults to 12000." }
         }
       },
       "outputSchema": {
         "type": "object",
-        "required": ["ok", "isError", "text"],
+        "required": ["text"],
         "properties": {
-          "ok": { "type": "boolean" },
-          "isError": { "type": "boolean" },
           "text": { "type": "string", "description": "Bounded human-readable extracted content." }
         }
       },
