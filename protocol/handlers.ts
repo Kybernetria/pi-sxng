@@ -1,4 +1,4 @@
-import type { ProtocolHandler, ProtocolInvocationContext } from "@kybernetria/pi-protocol";
+import type { ProtocolHandler, ProtocolInvocationContext } from "@kybernetria/pi-protocol/core";
 import { fetchExtractedContent, webSearch, type CompactOperationResult, type SearchOptions } from "../src/operations.js";
 
 export const PROTOCOL_PROVIDE_NAMES = ["web_search", "fetch_content"] as const;

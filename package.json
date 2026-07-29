@@ -21,10 +21,16 @@
   "license": "MIT",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "protocol:check": "pi-protocol check .",
+    "protocol:generate": "pi-protocol generate ."
+  },
+  "piProtocol": {
+    "generated": "protocol.generated.ts"
   },
   "dependencies": {
-    "@kybernetria/pi-protocol": "^1.0.10",
+    "@kybernetria/pi-protocol": "file:../pi-protocol/packages/pi-protocol",
+    "ajv": "8.18.0",
     "@mariozechner/pi-ai": "^0.73.1",
     "@mozilla/readability": "^0.6.0",
     "linkedom": "^0.18.12",
@@ -52,12 +58,10 @@
     "extension.ts",
     "src",
     "protocol",
+    "protocol.generated.ts",
     "pi.protocol.json",
     "README.md",
     "compose.yaml",
     "deploy"
-  ],
-  "bundledDependencies": [
-    "@kybernetria/pi-protocol"
   ]
 }

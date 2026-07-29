@@ -1,54 +1,120 @@
 {
-  "protocolVersion": "0.2.0",
-  "nodeId": "pi-search-extension",
-  "packageId": "pi-search-extension",
-  "version": "0.3.0",
-  "purpose": "Private-first SearXNG web search and bounded public web-content extraction.",
-  "tags": ["pi", "search", "web", "privacy"],
+  "$schema": "https://pi.dev/protocol/manifest-v1.schema.json",
+  "schemaVersion": 1,
+  "node": {
+    "id": "pi-search-extension",
+    "purpose": "Private-first SearXNG web search and bounded public web-content extraction.",
+    "tags": [
+      "pi",
+      "search",
+      "web",
+      "privacy"
+    ]
+  },
   "provides": [
     {
       "name": "web_search",
       "description": "Run one web search through the configured SearXNG service. Make parallel protocol calls for multiple independent queries.",
-      "tags": ["search", "web"],
-      "effects": ["network"],
+      "tags": [
+        "search",
+        "web"
+      ],
+      "effects": [
+        "network.read"
+      ],
       "inputSchema": {
         "type": "object",
-        "required": ["query"],
+        "required": [
+          "query"
+        ],
         "properties": {
-          "query": { "type": "string", "description": "Non-empty search query of at most 2000 characters." },
-          "max_results": { "type": "integer", "description": "Number of results from 1 to 20; defaults to 5." }
-        }
+          "query": {
+            "type": "string",
+            "description": "Non-empty search query of at most 2000 characters.",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Number of results from 1 to 20; defaults to 5.",
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "additionalProperties": false
       },
       "outputSchema": {
         "type": "object",
-        "required": ["text"],
+        "required": [
+          "text"
+        ],
         "properties": {
-          "text": { "type": "string", "description": "Bounded human-readable search results." }
-        }
+          "text": {
+            "type": "string",
+            "description": "Bounded human-readable search results.",
+            "maxLength": 50000
+          }
+        },
+        "additionalProperties": false
       },
-      "execution": { "type": "handler", "handler": "web_search" }
+      "traits": {
+        "determinism": "best_effort",
+        "replay": "safe",
+        "interaction": "request_response",
+        "cancellable": true
+      }
     },
     {
       "name": "fetch_content",
       "description": "Fetch and locally extract bounded readable content from one public HTTP(S) URL or PDF. Private destinations are rejected and optional Jina fallback is controlled only by JINA_ENABLED.",
-      "tags": ["web", "extract"],
-      "effects": ["network"],
+      "tags": [
+        "web",
+        "extract"
+      ],
+      "effects": [
+        "network.read"
+      ],
       "inputSchema": {
         "type": "object",
-        "required": ["url"],
+        "required": [
+          "url"
+        ],
         "properties": {
-          "url": { "type": "string", "description": "Non-empty public HTTP(S) URL of at most 8192 characters." },
-          "max_chars": { "type": "integer", "description": "Maximum total returned characters from 1 to 50000; defaults to 12000." }
-        }
+          "url": {
+            "type": "string",
+            "description": "Non-empty public HTTP(S) URL of at most 8192 characters.",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Maximum total returned characters from 1 to 50000; defaults to 12000.",
+            "minimum": 1,
+            "maximum": 50000
+          }
+        },
+        "additionalProperties": false
       },
       "outputSchema": {
         "type": "object",
-        "required": ["text"],
+        "required": [
+          "text"
+        ],
         "properties": {
-          "text": { "type": "string", "description": "Bounded human-readable extracted content." }
-        }
+          "text": {
+            "type": "string",
+            "description": "Bounded human-readable extracted content.",
+            "maxLength": 50000
+          }
+        },
+        "additionalProperties": false
       },
-      "execution": { "type": "handler", "handler": "fetch_content" }
+      "traits": {
+        "determinism": "best_effort",
+        "replay": "safe",
+        "interaction": "request_response",
+        "cancellable": true
+      }
     }
   ]
 }
