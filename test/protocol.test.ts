@@ -1,3 +1,7 @@
+async function invokeResult(fabric: { invokeTracked(request: any): Promise<any> }, request: any): Promise<any> {
+  return (await fabric.invokeTracked(request)).result;
+}
+
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -8,7 +12,7 @@ import { createHandlers, PROTOCOL_PROVIDE_NAMES } from "../protocol/handlers.ts"
 import { fetchExtractedContent, webSearch } from "../src/operations.ts";
 
 const expectedProvides = ["web_search", "fetch_content"];
-const definition = parseProtocolManifest(readFileSync(new URL("../pi.protocol.json", import.meta.url), "utf8"), { allowLegacyV02: false });
+const definition = parseProtocolManifest(readFileSync(new URL("../pi.protocol.json", import.meta.url), "utf8"));
 const manifest = definition.manifest;
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
 	version: string;
@@ -28,7 +32,7 @@ test("manifest exposes the exact strict protocol contracts", () => {
 	assert.deepEqual(manifest.provides[1].inputSchema.required, ["url"]);
 	assert.deepEqual(Object.keys(manifest.provides[1].inputSchema.properties ?? {}), ["max_chars", "url"]);
 	assert.deepEqual(manifest.provides.map((provide) => provide.outputSchema.required), [["text"], ["text"]]);
-	assert.match(packageJson.dependencies["@kybernetria/pi-protocol"], /releases\/download\/v3\.0\.3/);
+	assert.match(packageJson.dependencies["@kybernetria/pi-protocol"], /releases\/download\/v4\.0\.0/);
 	assert.equal(packageJson.piProtocol.generated, "protocol.generated.ts");
 	assert.deepEqual(packageJson.pi.extensions, ["./extension.ts"]);
 });
@@ -67,8 +71,8 @@ test("protocol invocations preserve input and AbortSignal", async () => {
 			},
 		}),
 	});
-	const search = await fabric.invoke({ nodeId: "pi-search-extension", provide: "web_search", input: { query: "pi" }, abortSignal: controller.signal });
-	const fetch = await fabric.invoke({ nodeId: "pi-search-extension", provide: "fetch_content", input: { url: "https://example.com" }, abortSignal: controller.signal });
+	const search = await invokeResult(fabric, { nodeId: "pi-search-extension", provide: "web_search", input: { query: "pi" }, abortSignal: controller.signal });
+	const fetch = await invokeResult(fabric, { nodeId: "pi-search-extension", provide: "fetch_content", input: { url: "https://example.com" }, abortSignal: controller.signal });
 	assert.deepEqual(search, { ok: true, nodeId: "pi-search-extension", provide: "web_search", output: { text: "search" } });
 	assert.equal(fetch.ok, true);
 	assert.deepEqual(seen.map(({ kind, input }) => ({ kind, input })), [
@@ -81,9 +85,9 @@ test("protocol invocations preserve input and AbortSignal", async () => {
 test("fabric and domain reject malformed requests before network access", async () => {
 	const fabric = createProtocolFabric();
 	fabric.install(definition, { handlers: createHandlers() });
-	const missing = await fabric.invoke({ nodeId: "pi-search-extension", provide: "web_search", input: {} });
+	const missing = await invokeResult(fabric, { nodeId: "pi-search-extension", provide: "web_search", input: {} });
 	assert.deepEqual(missing, { ok: false, error: { code: "INPUT_INVALID", message: "Input does not satisfy the protocol contract" } });
-	const wrongType = await fabric.invoke({ nodeId: "pi-search-extension", provide: "fetch_content", input: { url: 42 } });
+	const wrongType = await invokeResult(fabric, { nodeId: "pi-search-extension", provide: "fetch_content", input: { url: 42 } });
 	assert.deepEqual(wrongType, { ok: false, error: { code: "INPUT_INVALID", message: "Input does not satisfy the protocol contract" } });
 
 	await assert.rejects(webSearch({ query: "   " }), /non-empty/);

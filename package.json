@@ -29,8 +29,8 @@
     "generated": "protocol.generated.ts"
   },
   "dependencies": {
-    "@kybernetria/pi-protocol": "https://github.com/Kybernetria/pi-protocol/releases/download/v3.0.3/kybernetria-pi-protocol-3.0.3.tgz",
-    "@mariozechner/pi-ai": "^0.73.1",
+    "@earendil-works/pi-ai": "^0.80.10",
+    "@kybernetria/pi-protocol": "https://github.com/Kybernetria/pi-protocol/releases/download/v4.0.0/kybernetria-pi-protocol-4.0.0.tgz",
     "@mozilla/readability": "^0.6.0",
     "linkedom": "^0.18.12",
     "turndown": "^7.2.4",
